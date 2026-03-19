@@ -178,11 +178,11 @@ ANIM_DREAM_B = Animation(
     speed=0.0, loop=True, max_loops=3,
 )
 ANIM_DREAM_CROSS = Animation(
-    frames=[(108, i, 2) for i in range(16)],
+    frames=[(108, i, 4) for i in range(16)],
     speed=0.0, loop=False,
 )
 ANIM_DREAM_FALL = Animation(
-    frames=[(109, i, 4) for i in range(6, 16)],
+    frames=[(109, i, 6) for i in range(6, 16)],
     speed=0.0, loop=False,
 )
 
