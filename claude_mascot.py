@@ -160,6 +160,39 @@ GRAB_ANIMS = [
     ANIM_GRABBED_E, ANIM_GRABBED_F, ANIM_GRABBED_G, ANIM_GRABBED_H,
 ]
 
+# ── Dream animations (idle sheep, every 3-5 min) ────────────────────────────
+
+DREAM_MIN_TICKS = int(180 * 1000 / TICK_MS)   # 3 min
+DREAM_MAX_TICKS = int(300 * 1000 / TICK_MS)   # 5 min
+
+DREAM_MOVE_NONE  = 'none'
+DREAM_MOVE_CROSS = 'cross'   # horizontal L→R across screen, 1.5 s
+DREAM_MOVE_FALL  = 'fall'    # diagonal fall ↘→↙, 1.5 s
+
+ANIM_DREAM_A = Animation(
+    frames=[(109, 0, 8), (109, 1, 8), (109, 2, 8)],
+    speed=0.0, loop=True, max_loops=3,
+)
+ANIM_DREAM_B = Animation(
+    frames=[(106, 8, 8), (106, 9, 8), (106, 10, 8)],
+    speed=0.0, loop=True, max_loops=3,
+)
+ANIM_DREAM_CROSS = Animation(
+    frames=[(108, i, 2) for i in range(16)],
+    speed=0.0, loop=False,
+)
+ANIM_DREAM_FALL = Animation(
+    frames=[(109, i, 4) for i in range(6, 16)],
+    speed=0.0, loop=False,
+)
+
+DREAM_ANIMS = [
+    (ANIM_DREAM_A, DREAM_MOVE_NONE),
+    (ANIM_DREAM_B, DREAM_MOVE_NONE),
+    (ANIM_DREAM_CROSS, DREAM_MOVE_CROSS),
+    (ANIM_DREAM_FALL, DREAM_MOVE_FALL),
+]
+
 STATE_ANIMS = {
     'idle':    ANIM_IDLE,
     'working': ANIM_WORKING,
@@ -230,6 +263,15 @@ class Sheep:
         self.ask_message = ''     # texte de la bulle (état ask)
         self._done_handled = False
         self.player = AnimationPlayer(ANIM_IDLE)
+        # Dream system
+        self.y_offset = 0.0
+        self._dreaming = False
+        self._dream_movement = DREAM_MOVE_NONE
+        self._dream_saved_x = 0.0
+        self._dream_saved_dir = 1
+        self._dream_dx = 0.0
+        self._dream_dy = 0.0
+        self._dream_timer = random.randint(DREAM_MIN_TICKS, DREAM_MAX_TICKS)
         self._update_label()
 
     def set_state(self, new_state: str, message: str = ''):
@@ -248,6 +290,7 @@ class Sheep:
         # Ignorer 'done' si on a déjà fini la roulade (retour idle)
         if new_state == 'done' and self._done_handled:
             return
+        self._cancel_dream()
         self._done_handled = (new_state == 'idle' and self._done_handled)
         if new_state != self.state:
             anim = STATE_ANIMS.get(new_state, ANIM_IDLE)
@@ -289,6 +332,18 @@ class Sheep:
             self._done_handled = True
             self.set_state('idle')
 
+        # Dream system — idle sheep play a random animation every 3-5 min
+        if self.state == 'idle' and not self._dreaming and self.player.anim is ANIM_IDLE:
+            self._dream_timer -= 1
+            if self._dream_timer <= 0:
+                self._start_dream()
+        if self._dreaming:
+            self.x += self._dream_dx
+            self.y_offset += self._dream_dy
+            if self.player.finished:
+                self._cancel_dream()
+                self.player.play(ANIM_IDLE)
+
     def _wrap(self):
         margin = RENDER_SIZE // 2
         if self.x > self.sw + margin:
@@ -296,13 +351,45 @@ class Sheep:
         elif self.x < -margin:
             self.x = float(self.sw + margin)
 
+    def _start_dream(self):
+        anim, movement = random.choice(DREAM_ANIMS)
+        self._dreaming = True
+        self._dream_movement = movement
+        self._dream_saved_x = self.x
+        self._dream_saved_dir = self.dir
+        self.y_offset = 0.0
+        total_ticks = sum(f[2] for f in anim.frames)
+        if movement == DREAM_MOVE_CROSS:
+            self.x = float(-RENDER_SIZE)
+            self.dir = 1
+            self._dream_dx = (self.sw + RENDER_SIZE * 2) / total_ticks
+            self._dream_dy = 0.0
+        elif movement == DREAM_MOVE_FALL:
+            self.y_offset = float(-(STRIP_H - 40))
+            self.dir = -1
+            self._dream_dx = -(self.sw * 0.3) / total_ticks
+            self._dream_dy = (STRIP_H - 40) / total_ticks
+        else:
+            self._dream_dx = 0.0
+            self._dream_dy = 0.0
+        self.player.play(anim)
+
+    def _cancel_dream(self):
+        if not self._dreaming:
+            return
+        self._dreaming = False
+        self.x = self._dream_saved_x
+        self.dir = self._dream_saved_dir
+        self.y_offset = 0.0
+        self._dream_timer = random.randint(DREAM_MIN_TICKS, DREAM_MAX_TICKS)
+
     def draw(self, painter: QPainter, y_base: int):
         sheet, frame = self.player.current_frame()
         facing_right = self.dir > 0
         pix = self.atlas.get(sheet, frame, facing_right)
         cx = int(self.x)
         sprite_x = cx - RENDER_SIZE // 2
-        sprite_y = y_base - RENDER_SIZE
+        sprite_y = y_base - RENDER_SIZE + int(self.y_offset)
         painter.drawPixmap(sprite_x, sprite_y, pix)
 
         # Label SOUS le mouton : cercle coloré + texte
@@ -566,6 +653,7 @@ class SheepWindow(QWidget):
                 if sheep.hit_region(y_base).contains(e.pos()):
                     self._dragged_sheep = sheep
                     self._drag_offset_x = e.x() - int(sheep.x)
+                    sheep._cancel_dream()
                     sheep._pre_drag_state = sheep.state
                     sheep.player.play(random.choice(GRAB_ANIMS))
                     break
