@@ -35,8 +35,8 @@ RENDER_SIZE = SPRITE_SIZE * SCALE   # 80
 STRIP_H     = 180                   # hauteur bande (bulle 50 + 80 sprite + 20 texte dessous + marge)
 TICK_MS     = 40                    # ~25 fps
 AUTO_IDLE   = 12                    # s avant retour idle automatique
-STATE_DIR   = os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/tmp'), 'claude_mascot_states')
-STATE_FILE  = os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/tmp'), 'claude_mascot_state')  # legacy
+STATE_DIR   = '/tmp/claude_mascot_states'
+STATE_FILE  = '/tmp/claude_mascot_state'  # legacy
 ASSETS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 CHROMAKEY   = QColor(0, 0, 255)
 SHEETS      = list(range(101, 112))          # 101..111
@@ -146,6 +146,19 @@ ANIM_DONE = Animation(
     loop=True,
     max_loops=3,
 )
+
+ANIM_GRABBED_A = Animation(frames=[(103, 2, 8), (103, 3, 8), (103, 4, 8)], speed=0.0, loop=True)
+ANIM_GRABBED_B = Animation(frames=[(103, 5, 8), (103, 6, 8), (103, 7, 8)], speed=0.0, loop=True)
+ANIM_GRABBED_C = Animation(frames=[(103, 14, 10), (103, 15, 10)], speed=0.0, loop=True)
+ANIM_GRABBED_D = Animation(frames=[(104, 2, 8), (104, 3, 8)], speed=0.0, loop=True)
+ANIM_GRABBED_E = Animation(frames=[(105, 0, 8), (105, 1, 8), (105, 2, 8), (105, 3, 8), (105, 4, 8), (105, 5, 8), (105, 6, 8)], speed=0.0, loop=True)
+ANIM_GRABBED_F = Animation(frames=[(106, 5, 8)], speed=0.0, loop=True)
+ANIM_GRABBED_G = Animation(frames=[(107, 1, 8), (107, 2, 8), (107, 3, 8), (107, 4, 8)], speed=0.0, loop=True)
+ANIM_GRABBED_H = Animation(frames=[(107, 7, 8), (107, 8, 8), (107, 9, 8), (107, 10, 8)], speed=0.0, loop=True)
+GRAB_ANIMS = [
+    ANIM_GRABBED_A, ANIM_GRABBED_B, ANIM_GRABBED_C, ANIM_GRABBED_D,
+    ANIM_GRABBED_E, ANIM_GRABBED_F, ANIM_GRABBED_G, ANIM_GRABBED_H,
+]
 
 STATE_ANIMS = {
     'idle':    ANIM_IDLE,
@@ -409,7 +422,8 @@ class SheepWindow(QWidget):
         self.default_sheep.set_state('idle')
 
         self._last_mt_legacy = 0.0   # pour compat ancien fichier
-        self._drag_y = 0
+        self._dragged_sheep = None
+        self._drag_offset_x = 0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -422,11 +436,17 @@ class SheepWindow(QWidget):
 
     def _tick(self):
         self._poll_states()
-        # Update tous les moutons
+        # Update tous les moutons (sauf celui en cours de drag)
         for sheep in self.sheep_map.values():
-            sheep.update()
+            if sheep is self._dragged_sheep:
+                sheep.player.tick()
+            else:
+                sheep.update()
         if not self.sheep_map:
-            self.default_sheep.update()
+            if self.default_sheep is self._dragged_sheep:
+                self.default_sheep.player.tick()
+            else:
+                self.default_sheep.update()
         # Re-raise toutes les 2s pour rester au-dessus
         self._raise_counter = getattr(self, '_raise_counter', 0) + 1
         if self._raise_counter >= 50:  # 50 ticks × 40ms = 2s
@@ -540,14 +560,28 @@ class SheepWindow(QWidget):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            self._drag_y = e.y()
+            y_base = STRIP_H - 28
+            sheep_list = list(self.sheep_map.values()) if self.sheep_map else [self.default_sheep]
+            for sheep in sheep_list:
+                if sheep.hit_region(y_base).contains(e.pos()):
+                    self._dragged_sheep = sheep
+                    self._drag_offset_x = e.x() - int(sheep.x)
+                    sheep._pre_drag_state = sheep.state
+                    sheep.player.play(random.choice(GRAB_ANIMS))
+                    break
         elif e.button() == Qt.RightButton:
             QApplication.quit()
 
     def mouseMoveEvent(self, e):
-        if e.buttons() == Qt.LeftButton:
-            ny = self.y() + e.y() - self._drag_y
-            self.move(0, ny)
+        if e.buttons() == Qt.LeftButton and self._dragged_sheep is not None:
+            self._dragged_sheep.x = float(e.x() - self._drag_offset_x)
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            if self._dragged_sheep is not None:
+                anim = STATE_ANIMS.get(self._dragged_sheep._pre_drag_state, ANIM_IDLE)
+                self._dragged_sheep.player.play(anim)
+            self._dragged_sheep = None
 
     def _set_sticky(self):
         """Afficher sur tous les workspaces + toujours au-dessus via wmctrl."""
